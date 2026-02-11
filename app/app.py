@@ -134,11 +134,22 @@ def train_fallback_model(data_path: str):
     return model
 
 
+if not os.path.exists(DATA_PATH):
+    st.error(
+        "Dataset file not found for fallback training: "
+        "`data/WA_Fn-UseC_-Telco-Customer-Churn.csv`"
+    )
+    st.stop()
+
 if not os.path.exists(MODEL_PATH):
     st.warning("Saved model file not found. Using in-app fallback trained model.")
     model = train_fallback_model(DATA_PATH)
 else:
-    model = load_model(MODEL_PATH)
+    try:
+        model = load_model(MODEL_PATH)
+    except Exception:
+        st.warning("Saved model failed to load. Using in-app fallback trained model.")
+        model = train_fallback_model(DATA_PATH)
 
 col1, col2, col3 = st.columns(3)
 
