@@ -215,14 +215,19 @@ if st.button("Predict Churn", type="primary"):
         ]
     )
 
+    # Try raw schema first, then engineered schema, then fallback model.
     try:
         pred = model.predict(input_df)[0]
         prob = float(model.predict_proba(input_df)[0, 1]) if hasattr(model, "predict_proba") else None
     except Exception:
-        st.warning("Saved model is incompatible with deployment packages. Using fallback model.")
-        model = train_fallback_model(DATA_PATH)
-        pred = model.predict(input_df)[0]
-        prob = float(model.predict_proba(input_df)[0, 1]) if hasattr(model, "predict_proba") else None
+        try:
+            input_df_fe = add_features(input_df)
+            pred = model.predict(input_df_fe)[0]
+            prob = float(model.predict_proba(input_df_fe)[0, 1]) if hasattr(model, "predict_proba") else None
+        except Exception:
+            model = train_fallback_model(DATA_PATH)
+            pred = model.predict(input_df)[0]
+            prob = float(model.predict_proba(input_df)[0, 1]) if hasattr(model, "predict_proba") else None
 
     if pred == 1:
         st.error("Prediction: Customer is likely to churn.")
