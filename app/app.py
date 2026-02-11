@@ -4,6 +4,11 @@ import sys
 import joblib
 import pandas as pd
 import streamlit as st
+from sklearn.compose import ColumnTransformer
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.impute import SimpleImputer
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import FunctionTransformer, OneHotEncoder, StandardScaler
 
 
 st.set_page_config(page_title="Telco Churn Predictor", page_icon=":bar_chart:", layout="wide")
@@ -13,6 +18,7 @@ st.caption("MLDP project deployment - predicts whether a customer is likely to c
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MODEL_PATH = os.path.join(BASE_DIR, "..", "outputs", "models", "telco_churn_model.pkl")
+DATA_PATH = os.path.join(BASE_DIR, "..", "data", "WA_Fn-UseC_-Telco-Customer-Churn.csv")
 
 
 def add_features(dataframe: pd.DataFrame) -> pd.DataFrame:
@@ -43,14 +49,96 @@ def load_model(path: str):
     return joblib.load(path)
 
 
-if not os.path.exists(MODEL_PATH):
-    st.error(
-        "Model file not found. Run the notebook first to generate "
-        "`outputs/models/telco_churn_model.pkl`."
-    )
-    st.stop()
+@st.cache_resource
+def train_fallback_model(data_path: str):
+    """Train a fallback model in app if pickle compatibility fails."""
+    df = pd.read_csv(data_path)
+    df["TotalCharges"] = pd.to_numeric(df["TotalCharges"], errors="coerce")
+    df["Churn_bin"] = df["Churn"].map({"No": 0, "Yes": 1})
 
-model = load_model(MODEL_PATH)
+    df = df.drop(columns=["customerID"])
+    X = df.drop(columns=["Churn", "Churn_bin"])
+    y = df["Churn_bin"]
+
+    numeric_cols = [
+        "SeniorCitizen",
+        "tenure",
+        "MonthlyCharges",
+        "TotalCharges",
+        "avg_charge_per_tenure",
+        "is_new_customer",
+        "service_count",
+    ]
+    categorical_cols = [
+        "gender",
+        "Partner",
+        "Dependents",
+        "PhoneService",
+        "MultipleLines",
+        "InternetService",
+        "OnlineSecurity",
+        "OnlineBackup",
+        "DeviceProtection",
+        "TechSupport",
+        "StreamingTV",
+        "StreamingMovies",
+        "Contract",
+        "PaperlessBilling",
+        "PaymentMethod",
+    ]
+
+    preprocessor = ColumnTransformer(
+        transformers=[
+            (
+                "num",
+                Pipeline(
+                    steps=[
+                        ("imputer", SimpleImputer(strategy="median")),
+                        ("scaler", StandardScaler()),
+                    ]
+                ),
+                numeric_cols,
+            ),
+            (
+                "cat",
+                Pipeline(
+                    steps=[
+                        ("imputer", SimpleImputer(strategy="most_frequent")),
+                        ("ohe", OneHotEncoder(handle_unknown="ignore")),
+                    ]
+                ),
+                categorical_cols,
+            ),
+        ]
+    )
+
+    model = Pipeline(
+        steps=[
+            ("feature_engineering", FunctionTransformer(add_features, validate=False)),
+            ("preprocessor", preprocessor),
+            (
+                "model",
+                RandomForestClassifier(
+                    n_estimators=200,
+                    max_depth=16,
+                    min_samples_split=5,
+                    min_samples_leaf=1,
+                    max_features="sqrt",
+                    random_state=2025,
+                ),
+            ),
+        ]
+    )
+
+    model.fit(X, y)
+    return model
+
+
+if not os.path.exists(MODEL_PATH):
+    st.warning("Saved model file not found. Using in-app fallback trained model.")
+    model = train_fallback_model(DATA_PATH)
+else:
+    model = load_model(MODEL_PATH)
 
 col1, col2, col3 = st.columns(3)
 
@@ -127,11 +215,14 @@ if st.button("Predict Churn", type="primary"):
         ]
     )
 
-    pred = model.predict(input_df)[0]
-    if hasattr(model, "predict_proba"):
-        prob = float(model.predict_proba(input_df)[0, 1])
-    else:
-        prob = None
+    try:
+        pred = model.predict(input_df)[0]
+        prob = float(model.predict_proba(input_df)[0, 1]) if hasattr(model, "predict_proba") else None
+    except Exception:
+        st.warning("Saved model is incompatible with deployment packages. Using fallback model.")
+        model = train_fallback_model(DATA_PATH)
+        pred = model.predict(input_df)[0]
+        prob = float(model.predict_proba(input_df)[0, 1]) if hasattr(model, "predict_proba") else None
 
     if pred == 1:
         st.error("Prediction: Customer is likely to churn.")
