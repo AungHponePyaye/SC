@@ -1,7 +1,9 @@
 ﻿import os
+import sys
+
+import joblib
 import pandas as pd
 import streamlit as st
-import joblib
 
 
 st.set_page_config(page_title="Telco Churn Predictor", page_icon=":bar_chart:", layout="wide")
@@ -11,6 +13,29 @@ st.caption("MLDP project deployment - predicts whether a customer is likely to c
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MODEL_PATH = os.path.join(BASE_DIR, "..", "outputs", "models", "telco_churn_model.pkl")
+
+
+def add_features(dataframe: pd.DataFrame) -> pd.DataFrame:
+    """Feature engineering function used inside the saved sklearn pipeline."""
+    d = dataframe.copy()
+    d["avg_charge_per_tenure"] = d["TotalCharges"] / (d["tenure"] + 1)
+    d["is_new_customer"] = (d["tenure"] <= 12).astype(int)
+    d["service_count"] = (
+        (d["PhoneService"] == "Yes").astype(int)
+        + (d["OnlineSecurity"] == "Yes").astype(int)
+        + (d["OnlineBackup"] == "Yes").astype(int)
+        + (d["DeviceProtection"] == "Yes").astype(int)
+        + (d["TechSupport"] == "Yes").astype(int)
+        + (d["StreamingTV"] == "Yes").astype(int)
+        + (d["StreamingMovies"] == "Yes").astype(int)
+    )
+    return d
+
+
+# Compatibility shim for models pickled from notebook scope:
+# FunctionTransformer may reference '__main__.add_features'.
+if "__main__" in sys.modules:
+    setattr(sys.modules["__main__"], "add_features", add_features)
 
 
 @st.cache_resource
@@ -115,4 +140,3 @@ if st.button("Predict Churn", type="primary"):
 
     if prob is not None:
         st.metric("Churn Probability", f"{prob:.2%}")
-
